@@ -1,6 +1,6 @@
 from django.db import models
 from phonenumber_field.modelfields import PhoneNumberField
-
+from datetime import date
 
 # Create your models here.
 gender_choices=(('M','Male'),('F','Female'),('T','Transgender'))
@@ -8,16 +8,16 @@ class Patient(models.Model):
     name=models.CharField(max_length=255)
     dob=models.DateField()  #taking dob instead of age
     gender=models.CharField(max_length=20,choices=gender_choices)
-    contact=models.models.PhoneNumberField(unique=True)
+    contact=PhoneNumberField(unique=True)
     medical_history=models.TextField(blank=True, null=True)
     created_at=models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.name} - {self.age} years"
+        return f"{self.name} - {self.get_age()} years"
     
-    def age(self):
+    def get_age(self):
         today=date.today()
-        return today.year-self.dob.year - ((today.month, today.day)<(self.dob.month,slef.dob.day))
+        return today.year-self.dob.year - ((today.month, today.day)<(self.dob.month,self.dob.day))
 
 class Record(models.Model):
     patient=models.ForeignKey(Patient,on_delete=models.CASCADE,related_name='records')
