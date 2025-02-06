@@ -1,15 +1,14 @@
 from django.shortcuts import render
-from rest_framework import status
+from rest_framework import generics,status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
-from .models import Patient, Record
-from .serializers import UserSerializer, RegisterSerializer, get_tokens, PatientSerializer, RecordSerializer
+from .models import Patient, Record, Doctor, Availability, Appointment
+from .serializers import UserSerializer, RegisterSerializer, get_tokens, PatientSerializer, RecordSerializer, DoctorSerializer, AvailabilitySerializer, AppointmentSerializer
 from rest_framework.permissions import IsAuthenticated,AllowAny
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
-
-
+from .tasks import send_appointment_email
 
 # Create your views here
 class Register_user(APIView):
@@ -65,7 +64,7 @@ class Home(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        content = {'message': 'Hello, World!'}
+        content = {'message': 'Welcome to Electric Healthcare System'}
         return Response(content)
 
 
@@ -81,14 +80,21 @@ class Register_patient(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class Create_record(APIView):
-
     permission_classes = [IsAuthenticated]
 
     def post(self,request):
+        patient_id = request.data.get('patient_id')
+        try:
+            patient = Patient.objects.get(id=patient_id)
+        except Patient.DoesNotExist:
+            return Response({"error": "❌ Patient not found."}, status=status.HTTP_404_NOT_FOUND)
+
+
         serialzer=RecordSerializer(data=request.data)
         if serialzer.is_valid():
-            serialzer.save()
+            serialzer.save(patient=patient)
             return Response(serialzer.data,status=status.HTTP_201_CREATED)
+            
         return Response(serialzer.errors,status=status.HTTP_400_BAD_REQUEST)
 
 class View_record(APIView):
@@ -98,6 +104,10 @@ class View_record(APIView):
     def get(self,request,patient_id):
         patient=get_object_or_404(Patient,id=patient_id)
         records=patient.records.all()
+
+        if not records:
+            return Response({"message": "❌ No records found for this patient."}, status=status.HTTP_404_NOT_FOUND)
+
         serializer=RecordSerializer(records,many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -119,5 +129,49 @@ class Delete_record(APIView):
 
     def delete(self,request,record_id):
         record=get_object_or_404(Record,id=record_id)
-        record.delete()
-        return Response({"message": "Record deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+        try :
+            record.delete()
+            return Response({"message": f"✅ Record for {record.patient.name} deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+        
+        except Exception as e:
+            return Response({"error": "❌ Cannot delete record"}, status=status.HTTP_400_BAD_REQUEST)
+
+class Doctor_list(generics.ListCreateAPIView):
+    serializer_class = DoctorSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Doctor.objects.all()
+
+class Slot_Available(generics.ListCreateAPIView):
+    serializer_class = AvailabilitySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Availability.objects.filter(doctor=self.request.user.doctor)
+
+
+class Create_appointment(generics.ListCreateAPIView):
+    serializer_class = AppointmentSerializer
+    permission_classes = [IsAuthenticated]
+
+        
+    def create(self, request, *args, **kwargs):
+        request.data['patient'] = request.user.id
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            send_appointment_email.delay(
+                "Appointment Confirmed", "Your appointment has been booked successfully.", request.user.email
+            )
+            return Response({"message": "✅ Appointment booked!"}, status=status.HTTP_201_CREATED)
+        return Response({"error": "❌ Failed to book appointment."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class Reschedule_appointment(generics.UpdateAPIView):
+    serializer_class = AppointmentSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Appointment.objects.all()
+
+
+class Cancel_appointment(generics.DestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    queryset = Appointment.objects.all()

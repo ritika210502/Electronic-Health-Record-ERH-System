@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Patient, Record
+from .models import Patient, Record, Doctor, Availability, Appointment
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.validators import validate_email
@@ -77,6 +77,25 @@ class PatientSerializer(serializers.ModelSerializer):
 
     def get_age(self, obj):
         return obj.get_age()  # Calls get_age() method from the model
+    
+    def validate_name(self, value):
+        if not value or value.strip() == "":
+            raise serializers.ValidationError("❌ Name cannot be empty.")
+
+        if not re.match(r'^[a-zA-Z\s]+$', value):
+            raise serializers.ValidationError("❌ Name must only contain alphabetic characters and spaces.")
+
+        if len(value) < 3:
+            raise serializers.ValidationError("❌ Name must be at least 3 characters long.")
+        
+        return value
+
+
+    def validate_dob(self, value):
+        if value > timezone.now().date():
+            raise serializers.ValidationError("❌ Date of birth cannot be in the future.")
+        return value
+
 
 class RecordSerializer(serializers.ModelSerializer):
     patient_name = serializers.CharField(source='patient.name', read_only=True)
@@ -84,3 +103,39 @@ class RecordSerializer(serializers.ModelSerializer):
     class Meta:
         model = Record
         fields = ['id', 'patient', 'patient_name', 'diagnosis', 'treatment', 'prescribed_medications', 'doctor_notes', 'created_at', 'updated_at']
+
+
+class DoctorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Doctor
+        fields = '__all__'
+
+class AvailabilitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Availability
+        fields = '__all__'
+
+    def validate(self, data):
+        doctor = data['doctor']
+        date = data['date']
+        start_time = data['start_time']
+
+        if Availability.objects.filter(doctor=doctor, date=date, start_time=start_time).exists():
+            raise serializers.ValidationError("❌ This time slot is already booked.")
+        
+        return data
+
+class AppointmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Appointment
+        fields = '__all__'
+
+    def validate(self, data):
+        doctor = data['doctor']
+        date = data['date']
+        time = data['time']
+
+        if Appointment.objects.filter(doctor=doctor, date=date, time=time).exists():
+            raise serializers.ValidationError("❌ This time slot is already booked by another patient.")
+
+        return data
